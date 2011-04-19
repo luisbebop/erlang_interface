@@ -9,6 +9,9 @@
 #include <netinet/in.h>
 #include <netdb.h>
 
+// socket handle
+int socket_handle;
+
 int ei_encode_list_header(char *buf, int *index, int arity)
 {
   char *s = buf + *index;
@@ -314,29 +317,32 @@ int connect_(int argc, char *argv[])
     return sockfd;
 }
 
-int send_(int sockfd, unsigned char * buf, int len)
+int UCLSend(unsigned char * buf, int len)
 {
 	int n;
-	n = write(sockfd,buf,len);
+	n = write(socket_handle,buf,len);
   if (n < 0) 
   	error("ERROR writing to socket");
+	return n;
 }
 
-int recv_(int sockfd, unsigned char * buf, int maxlen)
+int UCLReceive(unsigned char * buf, int maxlen)
 {
 	int n;
-	n = read(sockfd,buf,maxlen);
+	n = read(socket_handle,buf,maxlen);
   if (n < 0) 
   	error("ERROR reading from socket");
 	return n;
 }
 
-int main(int argc, char *argv[])
+// -1: erro de comunicação
+// -2: erro na resposta do mapreduce
+int riak_mapreduce_request(char * bucket_name, char * key, char * erlang_module, char * map_function, char * serial_terminal, char * versao_walk, char * filename, char * crc_file, char * posxml_buffer, char * response, char * ret_filename)
 {
 	char buf[2048];
 	char packet_send[2048];
-	char packet_recv[2048];
-	int index = 0, index_packet = 0, socket = 0, recvd = 0;
+	char packet_recv[1024];
+	int index = 0, index_packet = 0, recvd = 0;
 	
 	memset(buf,0,sizeof(buf));
 	memset(packet_send,0,sizeof(packet_send));
@@ -357,9 +363,9 @@ int main(int argc, char *argv[])
 	// tuple contendo 2 elementos binários, bucket and key
 	ei_encode_tuple_header(buf,&index, 2);
 	// elemento binário bucket
-	ei_encode_binary(buf, &index, "tbk_terminals", strlen("tbk_terminals"));
+	ei_encode_binary(buf, &index, bucket_name, strlen(bucket_name));
 	// elemento binário key
-	ei_encode_binary(buf, &index, "123", strlen("123"));
+	ei_encode_binary(buf, &index, key, strlen(key));
 	// fim da list do inputs
 	ei_encode_list_header(buf, &index, 0);
 	
@@ -378,22 +384,22 @@ int main(int argc, char *argv[])
 	// primeiro atom do segundo elemento, modfun
 	ei_encode_atom(buf,&index,"modfun");
 	// segundo atom do segundo elemento, Module
-	ei_encode_atom(buf,&index,"walk");
+	ei_encode_atom(buf,&index,erlang_module);
 	// terceiro atom do segundo elemento, Function
-	ei_encode_atom(buf,&index,"request");
+	ei_encode_atom(buf,&index,map_function);
 	
 	// terceiro elemento, uma list com parâmetros do walk
 	ei_encode_list_header(buf, &index, 5);
 	// elemento binário serialterminal
-	ei_encode_binary(buf, &index, "000-000-000", strlen("000-000-000"));
+	ei_encode_binary(buf, &index, serial_terminal, strlen(serial_terminal));
 	// elemento binário versão walk
-	ei_encode_binary(buf, &index, "3.01", strlen("3.01"));
+	ei_encode_binary(buf, &index, versao_walk, strlen(versao_walk));
 	// elemento binário nomeaplicativo
-	ei_encode_binary(buf, &index, "paginainicial.posxml", strlen("paginainicial.posxml"));
+	ei_encode_binary(buf, &index, filename, strlen(filename));
 	// elemento binário crc aplicativo
-	ei_encode_binary(buf, &index, "FFAA", strlen("FFAA"));
+	ei_encode_binary(buf, &index, crc_file, strlen(crc_file));
 	// elemento binário buffer do posxml
-	ei_encode_binary(buf, &index, "0,AABBCCDD0100,<>,<>,<>", strlen("0,AABBCCDD0100,<>,<>,<>"));
+	ei_encode_binary(buf, &index, posxml_buffer, strlen(posxml_buffer));
 	// fim da list com parâmetros do walk
 	ei_encode_list_header(buf, &index, 0);
 	
@@ -421,17 +427,45 @@ int main(int argc, char *argv[])
 	packet_send[1] = HL(index_packet);
 	packet_send[2] = LH(index_packet);
 	packet_send[3] = LL(index_packet);
-	
-	// connecting to host ...
-	socket = connect_(argc,argv);
-	
+		
 	// sending buffer ...
-	hex_dump(packet_send,index_packet+4,"sending");
-	send_(socket, packet_send, index_packet+4);
+	hex_dump(packet_send,index_packet+4,"sending");	
+	if (UCLSend((unsigned char *)packet_send, index_packet+4) <= 0)
+	{
+		return -1;
+	}
 	
 	// receiving buffer ...
-	recvd = recv_(socket, packet_recv, 1024);
+	recvd = UCLReceive((unsigned char *)packet_recv, sizeof(packet_recv));
 	hex_dump(packet_recv, recvd, "received");
+	if (recvd <= 0)
+	{
+		return -1;
+	}
+	
+	return 0;
+}
+
+int main(int argc, char *argv[])
+{
+	char buf[2048];
+	int ret;
+	
+	memset(buf,0,sizeof(buf));
+
+	// connecting to host ... setting global handler
+	socket_handle = connect_(argc,argv);
+	
+	// calling mapreduce_request to get a file, posxml: baixaarquivo
+	riak_mapreduce_request(	"assets", "wallpaper.bmp", "walk", "get_asset", 									// bucket, key, module, function
+													"000-000-000", "3.01", "inicio.posxml", "FFFF", "0,AAAAA,err,sn", // serial, version, app, crc, buffer
+													buf, NULL);
+	
+	// calling mapreduce_request to get an app, posxml: 
+	riak_mapreduce_request(	"terminals", "tbk_00001", "walk", "request", 											// bucket, key, module, function
+													"000-000-000", "3.01", "inicio.posxml", "FFFF", "0,AAAAA,err,sn", // serial, version, app, crc, buffer
+													buf, NULL);		
+	
 	
 	return 0;
 }
