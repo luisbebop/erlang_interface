@@ -219,15 +219,55 @@ int pb_add_content_type(char * buf, int *index)
   return 0;
 }
 
-void hexdump(unsigned char *buffer, int size)
+void hex_dump(unsigned char *data, int size, char *caption)
 {
-	unsigned long i;
+	int i; // index in data...
+	int j; // index in line...
+	char temp[8];
+	char buffer[128];
+	char *ascii;
 
-	for (i=0;i<size;i++)
+	memset(buffer, 0, 128);
+
+	printf("---------> %s <--------- (%d bytes from %p)\n", caption, size, data);
+
+	// Printing the ruler...
+	printf("        +0          +4          +8          +c            0   4   8   c   \n");
+
+	// Hex portion of the line is 8 (the padding) + 3 * 16 = 52 chars long
+	// We add another four bytes padding and place the ASCII version...
+	ascii = buffer + 58;
+	memset(buffer, ' ', 58 + 16);
+	buffer[58 + 16] = '\n';
+	buffer[58 + 17] = '\0';
+	buffer[0] = '+';
+	buffer[1] = '0';
+	buffer[2] = '0';
+	buffer[3] = '0';
+	buffer[4] = '0';
+	for (i = 0, j = 0; i < size; i++, j++)
 	{
-		printf("%02X ",buffer[i]);
+		if (j == 16)
+		{
+			printf("%s", buffer);
+			memset(buffer, ' ', 58 + 16);
+
+			sprintf(temp, "+%04x", i);
+			memcpy(buffer, temp, 5);
+
+			j = 0;
+		}
+
+		sprintf(temp, "%02x", 0xff & data[i]);
+		memcpy(buffer + 8 + (j * 3), temp, 2);
+		if ((data[i] > 31) && (data[i] < 127))
+			ascii[j] = data[i];
+		else
+			ascii[j] = '.';
 	}
-	printf("\n");
+
+	if (j != 0)
+		printf("%s", buffer);
 }
 
 #define LOWORD(l)           ((unsigned short)((l) & 0xffff))
@@ -317,9 +357,9 @@ int main(int argc, char *argv[])
 	// tuple contendo 2 elementos binários, bucket and key
 	ei_encode_tuple_header(buf,&index, 2);
 	// elemento binário bucket
-	ei_encode_binary(buf, &index, "bucket", strlen("bucket"));
+	ei_encode_binary(buf, &index, "tbk_terminals", strlen("tbk_terminals"));
 	// elemento binário key
-	ei_encode_binary(buf, &index, "key", strlen("key"));
+	ei_encode_binary(buf, &index, "123", strlen("123"));
 	// fim da list do inputs
 	ei_encode_list_header(buf, &index, 0);
 	
@@ -341,8 +381,22 @@ int main(int argc, char *argv[])
 	ei_encode_atom(buf,&index,"walk");
 	// terceiro atom do segundo elemento, Function
 	ei_encode_atom(buf,&index,"request");
-	// terceiro elemento, args
-	ei_encode_atom(buf,&index,"none");
+	
+	// terceiro elemento, uma list com parâmetros do walk
+	ei_encode_list_header(buf, &index, 5);
+	// elemento binário serialterminal
+	ei_encode_binary(buf, &index, "000-000-000", strlen("000-000-000"));
+	// elemento binário versão walk
+	ei_encode_binary(buf, &index, "3.01", strlen("3.01"));
+	// elemento binário nomeaplicativo
+	ei_encode_binary(buf, &index, "paginainicial.posxml", strlen("paginainicial.posxml"));
+	// elemento binário crc aplicativo
+	ei_encode_binary(buf, &index, "FFAA", strlen("FFAA"));
+	// elemento binário buffer do posxml
+	ei_encode_binary(buf, &index, "0,AABBCCDD0100,<>,<>,<>", strlen("0,AABBCCDD0100,<>,<>,<>"));
+	// fim da list com parâmetros do walk
+	ei_encode_list_header(buf, &index, 0);
+	
 	// quarto elemento, atom true
 	ei_encode_atom(buf,&index,"true");
 	// fim da list da query
@@ -372,14 +426,12 @@ int main(int argc, char *argv[])
 	socket = connect_(argc,argv);
 	
 	// sending buffer ...
-	printf("sending - size buf: %d\n",index_packet+4);
-	hexdump(packet_send,index_packet+4);
+	hex_dump(packet_send,index_packet+4,"sending");
 	send_(socket, packet_send, index_packet+4);
 	
 	// receiving buffer ...
 	recvd = recv_(socket, packet_recv, 1024);
-	printf("received - size buf: %d\n",recvd);
-	hexdump(packet_recv,recvd);
+	hex_dump(packet_recv, recvd, "received");
 	
 	return 0;
 }
