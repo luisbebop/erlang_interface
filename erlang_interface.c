@@ -281,6 +281,8 @@ void hex_dump(unsigned char *data, int size, char *caption)
 #define HL(x)				LOBYTE(HIWORD( x ))
 #define LH(x)				HIBYTE(LOWORD( x ))
 #define LL(x)				LOBYTE(LOWORD( x ))
+#define MAKEWORD(a, b)      ((unsigned short)(((unsigned char)((a) & 0xff)) | ((unsigned short)((unsigned char)((b) & 0xff))) << 8))
+#define MAKELONG(low,high)	((int)(((unsigned short)(low)) | (((unsigned int)((unsigned short)(high))) << 16)))
 
 void error(const char *msg)
 {
@@ -337,12 +339,16 @@ int UCLReceive(unsigned char * buf, int maxlen)
 
 // -1: erro de comunicação
 // -2: erro na resposta do mapreduce
-int riak_mapreduce_request(char * bucket_name, char * key, char * erlang_module, char * map_function, char * serial_terminal, char * versao_walk, char * filename, char * crc_file, char * posxml_buffer, char * response, char * ret_filename)
+// -3: erro ao abrir arquivo para escrita
+int riak_mapreduce_request(	char * bucket_name, char * key, char * erlang_module, char * map_function, 
+														char * serial_terminal, char * versao_walk, char * filename, char * crc_file, char * posxml_buffer, 
+														char * response, char * save_to_file, int * ret_code)
 {
 	char buf[2048];
 	char packet_send[2048];
 	char packet_recv[1024];
-	int index = 0, index_packet = 0, recvd = 0;
+	int index = 0, index_packet = 0, recvd = 0, size_to_receive = 0, total_size = 0, i = 0, size_block = 0, len_recv = 0, ret_size = 0;
+	FILE *fp = NULL;
 	
 	memset(buf,0,sizeof(buf));
 	memset(packet_send,0,sizeof(packet_send));
@@ -442,30 +448,103 @@ int riak_mapreduce_request(char * bucket_name, char * key, char * erlang_module,
 	{
 		return -1;
 	}
+		
+	// verifica o buffer recebido pelo pos enviado pelo Riak
+	if ((unsigned char)packet_recv[9] != 0x83 || 
+			(unsigned char)packet_recv[10] != 0x6C || 
+			(unsigned char)packet_recv[14] != 0x02 )  
+	{
+		return -2;
+	}
 	
-	return 0;
+	// coloca o código de retorno da mensagem de mapreduce na variavel retcode
+	*ret_code = packet_recv[16];
+	
+	// calcula o tamanho do buffer a ser recebido
+	size_to_receive = MAKELONG(MAKEWORD(packet_recv[21],packet_recv[20]),MAKEWORD(packet_recv[19],packet_recv[18]));
+	ret_size = size_to_receive;
+	
+	// subtrai o tamanho do header antes de chegar no elemento da list q contém o arquivo binário
+	recvd -= 22 /* header size */ + 1 /* ultimo byte contendo o final da list */;
+		
+	// subtrai do tamanho de bytes a receber, com o tamanho do header e ultimo byte recebido
+	size_to_receive -= recvd;
+
+	// download de arquivo ou copia para buffer de memoria
+	if (save_to_file)
+	{
+			// arquivo tem tamanho maior q 0
+			if (ret_size > 0)
+			{
+				fp = fopen(save_to_file, "wb");
+				if (fp == NULL) return -3;
+				if (size_to_receive <= 0)	fwrite(&packet_recv[22],1,recvd - 1,fp);
+				else											fwrite(&packet_recv[22],1,recvd,fp);
+			}
+	}
+	else
+	{
+		memcpy(response,&packet_recv[22], recvd);
+	}
+		
+	// loop se necessario para baixar o restante do arquivo ou buffer
+	i = 0;
+	while(size_to_receive > 0)
+	{
+		if(size_to_receive > 1024)	size_block = 1024;
+		else												size_block = size_to_receive;
+		
+		memset(packet_recv,0,sizeof(packet_recv));
+		len_recv = UCLReceive((unsigned char *)&packet_recv[0],size_block);
+		if(len_recv <= 0)
+		{
+			if (save_to_file && fp) fclose(fp);
+			return -1;
+		}
+
+		if (save_to_file && fp)
+		{
+			if ((size_to_receive - len_recv) <= 0)
+				fwrite(packet_recv,1,len_recv - 1,fp);
+			else
+				fwrite(packet_recv,1,len_recv,fp);
+		}
+		else 
+		{
+			memcpy(&response[total_size],packet_recv,len_recv);
+		}
+
+		size_to_receive -= len_recv;
+		total_size += len_recv;
+		i++;
+	}
+	
+	if (save_to_file && fp) fclose(fp);
+	return ret_size;
 }
 
 int main(int argc, char *argv[])
 {
 	char buf[2048];
 	int ret;
+	int ret_code = 0;
 	
 	memset(buf,0,sizeof(buf));
 
 	// connecting to host ... setting global handler
 	socket_handle = connect_(argc,argv);
 	
-	// calling mapreduce_request to get a file, posxml: baixaarquivo
-	riak_mapreduce_request(	"assets", "wallpaper.bmp", "walk", "get_asset", 									// bucket, key, module, function
-													"000-000-000", "3.01", "inicio.posxml", "FFFF", "0,AAAAA,err,sn", // serial, version, app, crc, buffer
-													buf, NULL);
+	// // calling mapreduce_request to get a file, posxml: baixaarquivo
+	// riak_mapreduce_request(	"assets", "wallpaper.bmp", "walk", "get_asset", 									// bucket, key, module, function
+	// 												"000-000-000", "3.01", "inicio.posxml", "FFFF", "0,AAAAA,err,sn", // serial, version, app, crc, buffer
+	// 												buf, NULL, &ret_code);
 	
 	// calling mapreduce_request to get an app, posxml: 
-	riak_mapreduce_request(	"terminals", "tbk_00001", "walk", "request", 											// bucket, key, module, function
+	ret = riak_mapreduce_request(	"terminals", "tbk_00001", "walk", "request", 											// bucket, key, module, function
 													"000-000-000", "3.01", "inicio.posxml", "FFFF", "0,AAAAA,err,sn", // serial, version, app, crc, buffer
-													buf, NULL);		
-	
-	
+													buf, NULL, &ret_code);
+													
+	printf("ret = %d ret_code = %d\n", ret, ret_code);
+	hex_dump(buf, ret, "response");		
 	return 0;
 }
