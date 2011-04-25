@@ -345,8 +345,8 @@ int riak_mapreduce_request(	char * bucket_name, char * key, char * erlang_module
 														char * response, char * save_to_file, int * ret_code)
 {
 	char buf[2048];
-	char packet_send[2048];
-	char packet_recv[1024];
+	unsigned char packet_send[2048];
+	unsigned char packet_recv[1024];
 	int index = 0, index_packet = 0, recvd = 0, size_to_receive = 0, total_size = 0, i = 0, size_block = 0, len_recv = 0, ret_size = 0;
 	FILE *fp = NULL;
 	
@@ -436,13 +436,13 @@ int riak_mapreduce_request(	char * bucket_name, char * key, char * erlang_module
 		
 	// sending buffer ...
 	hex_dump(packet_send,index_packet+4,"sending");	
-	if (UCLSend((unsigned char *)packet_send, index_packet+4) <= 0)
+	if (UCLSend(packet_send, index_packet+4) <= 0)
 	{
 		return -1;
 	}
 	
 	// receiving buffer ...
-	recvd = UCLReceive((unsigned char *)packet_recv, sizeof(packet_recv));
+	recvd = UCLReceive(packet_recv, sizeof(packet_recv));
 	hex_dump(packet_recv, recvd, "received");
 	if (recvd <= 0)
 	{
@@ -450,9 +450,7 @@ int riak_mapreduce_request(	char * bucket_name, char * key, char * erlang_module
 	}
 		
 	// verifica o buffer recebido pelo pos enviado pelo Riak
-	if ((unsigned char)packet_recv[9] != 0x83 || 
-			(unsigned char)packet_recv[10] != 0x6C || 
-			(unsigned char)packet_recv[14] != 0x02 )  
+	if (packet_recv[9] != 0x83 || packet_recv[10] != 0x6C || packet_recv[14] != 0x02 )  
 	{
 		return -2;
 	}
@@ -495,7 +493,7 @@ int riak_mapreduce_request(	char * bucket_name, char * key, char * erlang_module
 		else												size_block = size_to_receive;
 		
 		memset(packet_recv,0,sizeof(packet_recv));
-		len_recv = UCLReceive((unsigned char *)&packet_recv[0],size_block);
+		len_recv = UCLReceive(&packet_recv[0],size_block);
 		if(len_recv <= 0)
 		{
 			if (save_to_file && fp) fclose(fp);
@@ -534,16 +532,31 @@ int main(int argc, char *argv[])
 	// connecting to host ... setting global handler
 	socket_handle = connect_(argc,argv);
 	
-	// // calling mapreduce_request to get a file, posxml: baixaarquivo
-	// riak_mapreduce_request(	"assets", "wallpaper.bmp", "walk", "get_asset", 									// bucket, key, module, function
-	// 												"000-000-000", "3.01", "inicio.posxml", "FFFF", "0,AAAAA,err,sn", // serial, version, app, crc, buffer
+	// calling mapreduce_request to get a file, posxml: baixaarquivo
+	//  0: enviando arquivo para o pos
+	//  1: o arquivo do pos é igual ao arquivo do banco de dados
+	//  2: o arquivo não foi encontrado
+	//  3: serial number não autorizado
+	// ret = riak_mapreduce_request(	"assets", "tbk_hello.txt", "walk", "get_asset", 								// bucket, key, module, function
+	// 															"129-321-123", "3.01", "tbk_hello.txt", "992A", "0,AAAAA,err,sn", // serial, version, app, crc, buffer
+	// 															buf, NULL, &ret_code);
+	
+	//  calling mapreduce_request to get an app, posxml: 
+	//  0: enviando novo aplicativo
+	//  1: enviando nova mensagem para mostrar no pos
+	ret = riak_mapreduce_request( "terminals", "tbk_112233", "walk", "request", 								// bucket, key, module, function
+													"123-321-123", "3.01", "tbk_claro.posxml", "0357", "0,AAAAA,err,sn", 	// serial, version, app, crc, buffer
+													buf, NULL, &ret_code);
+	
+	
+	// calling mapreduce_request to get the company name:
+	// 0: enviando company name
+	// 1: erro na busca do serial
+	// ret = riak_mapreduce_request( "serials", "123-321-123", "walk", "company", 								// bucket, key, module, function
+	// 												"123-321-123", "3.01", "inicio.posxml", "FFFF", "0,AAAAA,err,sn", 	// serial, version, app, crc, buffer
 	// 												buf, NULL, &ret_code);
 	
-	// calling mapreduce_request to get an app, posxml: 
-	ret = riak_mapreduce_request(	"terminals", "tbk_00001", "walk", "request", 											// bucket, key, module, function
-													"000-000-000", "3.01", "inicio.posxml", "FFFF", "0,AAAAA,err,sn", // serial, version, app, crc, buffer
-													buf, NULL, &ret_code);
-													
+											
 	printf("ret = %d ret_code = %d\n", ret, ret_code);
 	hex_dump(buf, ret, "response");		
 	return 0;
