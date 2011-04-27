@@ -1,1 +1,4 @@
 *.out
+*.dat
+*.posxml
+.DS*

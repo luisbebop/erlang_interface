@@ -448,22 +448,33 @@ int riak_mapreduce_request(	char * bucket_name, char * key, char * erlang_module
 	{
 		return -1;
 	}
+	
+	// procura pelo inicio do binary term do erlang
+	for(i = 0; i < recvd; i++)
+	{
+		if (packet_recv[i] == 0x83) break;
+	}
+	
+	// não encontrou o inicio do binary term do erlang
+	if (i >= recvd) {
+		return -2;
+	}
 		
 	// verifica o buffer recebido pelo pos enviado pelo Riak
-	if (packet_recv[9] != 0x83 || packet_recv[10] != 0x6C || packet_recv[14] != 0x02 )  
+	if (packet_recv[i] != 0x83 || packet_recv[i+1] != 0x6C || packet_recv[i+5] != 0x02 )  
 	{
 		return -2;
 	}
 	
 	// coloca o código de retorno da mensagem de mapreduce na variavel retcode
-	*ret_code = packet_recv[16];
+	*ret_code = packet_recv[i+7];
 	
 	// calcula o tamanho do buffer a ser recebido
-	size_to_receive = MAKELONG(MAKEWORD(packet_recv[21],packet_recv[20]),MAKEWORD(packet_recv[19],packet_recv[18]));
+	size_to_receive = MAKELONG(MAKEWORD(packet_recv[i+12],packet_recv[i+11]),MAKEWORD(packet_recv[i+10],packet_recv[i+9]));
 	ret_size = size_to_receive;
 	
 	// subtrai o tamanho do header antes de chegar no elemento da list q contém o arquivo binário
-	recvd -= 22 /* header size */ + 1 /* ultimo byte contendo o final da list */;
+	recvd -= (i+13); /* header size */
 		
 	// subtrai do tamanho de bytes a receber, com o tamanho do header e ultimo byte recebido
 	size_to_receive -= recvd;
@@ -474,26 +485,27 @@ int riak_mapreduce_request(	char * bucket_name, char * key, char * erlang_module
 			// arquivo tem tamanho maior q 0
 			if (ret_size > 0)
 			{
-				fp = fopen(save_to_file, "wb");
+				fp = fopen(save_to_file, "w");
 				if (fp == NULL) return -3;
-				if (size_to_receive <= 0)	fwrite(&packet_recv[22],1,recvd - 1,fp);
-				else											fwrite(&packet_recv[22],1,recvd,fp);
+				if (size_to_receive <= 0)	fwrite(&packet_recv[i+13],1,recvd - 1,fp);
+				else						fwrite(&packet_recv[i+13],1,recvd,fp);
 			}
 	}
 	else
 	{
-		memcpy(response,&packet_recv[22], recvd);
+		memcpy(response,&packet_recv[i+13], recvd);
 	}
-		
+			
 	// loop se necessario para baixar o restante do arquivo ou buffer
 	i = 0;
 	while(size_to_receive > 0)
 	{
 		if(size_to_receive > 1024)	size_block = 1024;
-		else												size_block = size_to_receive;
+		else						size_block = size_to_receive;
 		
 		memset(packet_recv,0,sizeof(packet_recv));
 		len_recv = UCLReceive(&packet_recv[0],size_block);
+		printf("receiving = %d\n", len_recv);
 		if(len_recv <= 0)
 		{
 			if (save_to_file && fp) fclose(fp);
@@ -502,10 +514,9 @@ int riak_mapreduce_request(	char * bucket_name, char * key, char * erlang_module
 
 		if (save_to_file && fp)
 		{
-			if ((size_to_receive - len_recv) <= 0)
-				fwrite(packet_recv,1,len_recv - 1,fp);
-			else
-				fwrite(packet_recv,1,len_recv,fp);
+			// if ((size_to_receive - len_recv) <= 0)	fwrite(packet_recv,1,len_recv - 1,fp);
+			// else									fwrite(packet_recv,1,len_recv,fp);
+			fwrite(packet_recv,1,len_recv,fp);
 		}
 		else 
 		{
@@ -523,7 +534,7 @@ int riak_mapreduce_request(	char * bucket_name, char * key, char * erlang_module
 
 int main(int argc, char *argv[])
 {
-	char buf[2048];
+	char buf[1024 * 32];
 	int ret;
 	int ret_code = 0;
 	
@@ -537,17 +548,16 @@ int main(int argc, char *argv[])
 	//  1: o arquivo do pos é igual ao arquivo do banco de dados
 	//  2: o arquivo não foi encontrado
 	//  3: serial number não autorizado
-	// ret = riak_mapreduce_request(	"assets", "tbk_hello.txt", "walk", "get_asset", 								// bucket, key, module, function
-	// 															"129-321-123", "3.01", "tbk_hello.txt", "992A", "0,AAAAA,err,sn", // serial, version, app, crc, buffer
-	// 															buf, NULL, &ret_code);
+	// ret = riak_mapreduce_request( "assets", "tbk_teste2.posxml", "walk", "get_asset", 								// bucket, key, module, function
+	// 															"521-661-006", "3.01", "tbk_inicio.posxml", "FFFF", "0,AAAAA,err,sn", // serial, version, app, crc, buffer
+	// 															buf, "NULL7.dat", &ret_code);
 	
 	//  calling mapreduce_request to get an app, posxml: 
 	//  0: enviando novo aplicativo
 	//  1: enviando nova mensagem para mostrar no pos
-	ret = riak_mapreduce_request( "terminals", "tbk_112233", "walk", "request", 								// bucket, key, module, function
-													"123-321-123", "3.01", "tbk_claro.posxml", "0357", "0,AAAAA,err,sn", 	// serial, version, app, crc, buffer
-													buf, NULL, &ret_code);
-	
+	ret = riak_mapreduce_request("terminals", "tbk_123456", "walk", "request", 							// bucket, key, module, function
+								 "521-661-006", "3.01", "tbk_teste3.posxml", "FFFF", "0,AAAAA,err,sn", 	// serial, version, app, crc, buffer
+								 buf, "NULL10.dat", &ret_code);
 	
 	// calling mapreduce_request to get the company name:
 	// 0: enviando company name
